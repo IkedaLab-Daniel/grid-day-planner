@@ -25,3 +25,34 @@ export async function listActivities(sb: SupabaseClient): Promise<Activity[]> {
     archivedAt: r.archived_at ? new Date(r.archived_at) : null,
   }))
 }
+
+export interface ActivityInput {
+  name: string
+  color: string
+  colorTo: string | null
+  category: Category
+}
+
+export async function createActivity(sb: SupabaseClient, userId: string, input: ActivityInput): Promise<void> {
+  const { error } = await sb.from('activities').insert({
+    user_id: userId,
+    name: input.name,
+    color: input.color,
+    color_to: input.colorTo,
+    category: input.category,
+  })
+  if (error) throw error
+}
+
+export async function updateActivity(sb: SupabaseClient, id: string, input: ActivityInput): Promise<void> {
+  const { error } = await sb
+    .from('activities')
+    .update({ name: input.name, color: input.color, color_to: input.colorTo, category: input.category })
+    .eq('id', id)
+  if (error) throw error
+}
+
+export async function archiveActivity(sb: SupabaseClient, id: string): Promise<void> {
+  const { error } = await sb.from('activities').update({ archived_at: new Date().toISOString() }).eq('id', id)
+  if (error) throw error
+}

@@ -15,3 +15,11 @@ export async function getProfile(sb: SupabaseClient): Promise<Profile> {
   if (error) throw error
   return { timezone: safeTimezone(data.timezone), dayStart: String(data.day_start).slice(0, 5) }
 }
+
+export async function updateProfile(sb: SupabaseClient, userId: string, profile: Profile): Promise<void> {
+  const { error } = await sb
+    .from('profiles')
+    .update({ timezone: profile.timezone, day_start: profile.dayStart })
+    .eq('id', userId)
+  if (error) throw error
+}

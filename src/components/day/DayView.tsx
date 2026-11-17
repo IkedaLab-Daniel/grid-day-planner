@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { computeTotals } from '@/lib/blocks/totals'
 import { ActivityPicker } from '@/components/day/ActivityPicker'
+import { BlockEditSheet } from '@/components/day/BlockEditSheet'
 import { DayGrid } from '@/components/day/DayGrid'
 import { TotalsStrip } from '@/components/day/TotalsStrip'
 import type { Activity, Block, DayRange, Kind } from '@/lib/types'
@@ -22,6 +23,8 @@ export interface DayViewProps {
   blocks: Block[]
   activities: Activity[]
   paint(input: PaintInput): Promise<void>
+  updateBlock(input: { id: string; startAt: string; endAt: string }): Promise<void>
+  deleteBlock(id: string): Promise<void>
 }
 
 const LAYERS: { kind: Kind; label: string }[] = [
@@ -29,9 +32,10 @@ const LAYERS: { kind: Kind; label: string }[] = [
   { kind: 'actual', label: 'Actual' },
 ]
 
-export function DayView({ dateKey, range, tz, blocks, activities, paint }: DayViewProps) {
+export function DayView({ dateKey, range, tz, blocks, activities, paint, updateBlock, deleteBlock }: DayViewProps) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [layer, setLayer] = useState<Kind>('plan')
+  const [editing, setEditing] = useState<Block | null>(null)
   const totals = computeTotals(blocks, range)
 
   return (
@@ -63,6 +67,7 @@ export function DayView({ dateKey, range, tz, blocks, activities, paint }: DayVi
               blocks={blocks}
               activities={activities}
               activeActivityId={activeId}
+              onBlockTap={setEditing}
               onPaint={({ startCell, endCell }) => {
                 if (activeId) void paint({ dateKey, kind: l.kind, activityId: activeId, startCell, endCell })
               }}
@@ -72,6 +77,24 @@ export function DayView({ dateKey, range, tz, blocks, activities, paint }: DayVi
       </div>
 
       <TotalsStrip totals={totals} activities={activities} />
+
+      {editing && (
+        <BlockEditSheet
+          key={editing.id}
+          block={editing}
+          range={range}
+          tz={tz}
+          onClose={() => setEditing(null)}
+          onSave={async (startAt, endAt) => {
+            await updateBlock({ id: editing.id, startAt: startAt.toISOString(), endAt: endAt.toISOString() })
+            setEditing(null)
+          }}
+          onDelete={async () => {
+            await deleteBlock(editing.id)
+            setEditing(null)
+          }}
+        />
+      )}
     </div>
   )
 }

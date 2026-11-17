@@ -108,3 +108,35 @@ describe('DayGrid', () => {
     expect(document.querySelector('[data-cell="6"]')).not.toHaveStyle('background-color: #A6A6A6')
   })
 })
+
+describe('DayGrid block tapping', () => {
+  const block: Block = {
+    id: 'b1',
+    activityId: 'a1',
+    kind: 'plan',
+    startAt: cellStart(range, 6),
+    endAt: cellStart(range, 8),
+    source: 'manual',
+  }
+
+  test('tapping a block in scroll mode reports it', () => {
+    const onBlockTap = vi.fn()
+    setup({ blocks: [block], onBlockTap })
+    fireEvent.click(document.querySelector('[data-cell="7"]')!)
+    expect(onBlockTap).toHaveBeenCalledWith(block)
+  })
+
+  test('tapping an empty cell reports nothing', () => {
+    const onBlockTap = vi.fn()
+    setup({ blocks: [block], onBlockTap })
+    fireEvent.click(document.querySelector('[data-cell="20"]')!)
+    expect(onBlockTap).not.toHaveBeenCalled()
+  })
+
+  test('in paint mode a click does not open the block', () => {
+    const onBlockTap = vi.fn()
+    setup({ blocks: [block], onBlockTap, activeActivityId: 'a1' })
+    fireEvent.click(document.querySelector('[data-cell="7"]')!)
+    expect(onBlockTap).not.toHaveBeenCalled()
+  })
+})

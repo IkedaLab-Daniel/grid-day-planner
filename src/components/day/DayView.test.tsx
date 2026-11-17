@@ -11,7 +11,7 @@ const activities: Activity[] = [
 
 function setup() {
   render(
-    <DayView dateKey="2026-08-16" range={range} tz="UTC" blocks={[]} activities={activities} paint={vi.fn()} />,
+    <DayView dateKey="2026-08-16" range={range} tz="UTC" blocks={[]} activities={activities} paint={vi.fn()} updateBlock={vi.fn()} deleteBlock={vi.fn()} />,
   )
 }
 

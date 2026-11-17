@@ -1,5 +1,6 @@
 import { Suspense } from 'react'
 import { connection } from 'next/server'
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createServerClient } from '@/lib/supabase/server'
 import { getProfile } from '@/lib/db/profile'
@@ -8,7 +9,7 @@ import { listBlocks } from '@/lib/db/blocks'
 import { dateKeyOf, dayRangeFor } from '@/lib/time/day'
 import { DayView } from '@/components/day/DayView'
 import { DayNav } from '@/components/day/DayNav'
-import { paintAction } from './actions'
+import { deleteBlockAction, paintAction, updateBlockAction } from './actions'
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/
 
@@ -35,7 +36,12 @@ async function DayContent({ params }: { params: Promise<{ date: string }> }) {
   return (
     <main className="mx-auto flex max-w-5xl flex-col gap-4 px-4 py-4">
       <header className="flex flex-col gap-2">
-        <h1 className="text-xl font-semibold">{date}</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-semibold">{date}</h1>
+          <Link className="text-sm underline" href="/settings">
+            Settings
+          </Link>
+        </div>
         <DayNav dateKey={date} todayKey={todayKey} />
       </header>
       <DayView
@@ -45,6 +51,8 @@ async function DayContent({ params }: { params: Promise<{ date: string }> }) {
         blocks={blocks}
         activities={activities}
         paint={paintAction}
+        updateBlock={updateBlockAction}
+        deleteBlock={deleteBlockAction}
       />
     </main>
   )

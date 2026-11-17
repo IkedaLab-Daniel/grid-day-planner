@@ -18,10 +18,12 @@ export interface DayGridProps {
   activities: Activity[]
   activeActivityId: string | null
   onPaint(p: { startCell: number; endCell: number }): void
+  onBlockTap?(block: Block): void
 }
 
 interface CellFill {
   activity: Activity
+  block: Block
   /** 0..1 position within its block, for gradients */
   t: number
 }
@@ -32,7 +34,7 @@ function fillFor(a: Activity, t: number): string {
     : a.color
 }
 
-export function DayGrid({ range, tz, layer, blocks, activities, activeActivityId, onPaint }: DayGridProps) {
+export function DayGrid({ range, tz, layer, blocks, activities, activeActivityId, onPaint, onBlockTap }: DayGridProps) {
   const ref = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<{ start: number; current: number } | null>(null)
   const count = cellCount(range)
@@ -48,7 +50,7 @@ export function DayGrid({ range, tz, layer, blocks, activities, activeActivityId
     const from = Math.max(cellIndexOf(range, b.startAt), 0)
     const to = Math.min(cellIndexOf(range, b.endAt), count)
     for (let i = from; i < to; i++) {
-      fills[i] = { activity, t: to - from <= 1 ? 0 : (i - from) / (to - from - 1) }
+      fills[i] = { activity, block: b, t: to - from <= 1 ? 0 : (i - from) / (to - from - 1) }
     }
   }
 
@@ -104,6 +106,7 @@ export function DayGrid({ range, tz, layer, blocks, activities, activeActivityId
                 key={i}
                 data-cell={i}
                 data-activity={fill?.activity.id}
+                onClick={() => mode === 'scroll' && fill && onBlockTap?.(fill.block)}
                 className={`border border-foreground/20 ${preview ? 'opacity-70' : ''}`}
                 style={background ? { background } : undefined}
               />
