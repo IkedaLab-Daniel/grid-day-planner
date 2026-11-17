@@ -49,3 +49,7 @@ export function rowLabel(range: DayRange, row: number, tz: string): string {
   const local = new TZDate(cellStart(range, row * CELLS_PER_ROW).getTime(), tz)
   return String(local.getHours() % 12 || 12)
 }
+
+export function cellIndexOf(range: DayRange, instant: Date): number {
+  return Math.floor((instant.getTime() - range.start.getTime()) / CELL_MS)
+}

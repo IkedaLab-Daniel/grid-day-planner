@@ -7,6 +7,7 @@ import {
   cellFromPoint,
   isOnGrid,
   rowLabel,
+  cellIndexOf,
 } from '@/lib/grid/grid'
 
 const utc = dayRangeFor('2026-08-16', 'UTC', '05:00')
@@ -70,4 +71,13 @@ describe('rowLabel', () => {
   test('first row is the day start hour', () => expect(rowLabel(utc, 0, 'UTC')).toBe('5'))
   test('noon row is 12', () => expect(rowLabel(utc, 7, 'UTC')).toBe('12'))
   test('hour after noon is 1', () => expect(rowLabel(utc, 8, 'UTC')).toBe('1'))
+})
+
+describe('cellIndexOf', () => {
+  test('returns the index of the cell an instant falls in', () => {
+    expect(cellIndexOf(utc, cellStart(utc, 7))).toBe(7)
+  })
+  test('floors an instant in the middle of a cell', () => {
+    expect(cellIndexOf(utc, new Date(cellStart(utc, 7).getTime() + 9 * 60_000))).toBe(7)
+  })
 })
