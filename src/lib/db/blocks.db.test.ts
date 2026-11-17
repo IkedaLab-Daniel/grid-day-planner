@@ -2,7 +2,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'vitest'
 import { createTestUser, cleanupTestUsers, type TestUser } from '../../../supabase/tests/helpers'
 import { listBlocks, saveBlock, moveBlock } from '@/lib/db/blocks'
 import { listActivities } from '@/lib/db/activities'
-import { getProfile } from '@/lib/db/profile'
+import { getProfile, updateProfile } from '@/lib/db/profile'
 import { dayRangeFor } from '@/lib/time/day'
 import type { NewBlock, Profile } from '@/lib/types'
 
@@ -85,6 +85,38 @@ describe('moveBlock', () => {
     expect(after.map((r) => [r.activityId, r.startAt.toISOString(), r.endAt.toISOString()])).toEqual([
       [actA, '2026-08-16T09:30:00.000Z', '2026-08-16T10:30:00.000Z'],
       [actB, '2026-08-16T10:30:00.000Z', '2026-08-16T12:00:00.000Z'],
+    ])
+  })
+})
+
+describe('moveBlock on a block that crosses the current day boundary', () => {
+  test('keeps the part of the original that belongs to the neighbouring day', async () => {
+    const u = await createTestUser('UTC')
+    const acts = await listActivities(u.client)
+    // Stored while the day started at 05:00; it later crosses the new 06:00 boundary.
+    const ins = await u.client
+      .from('blocks')
+      .insert({
+        user_id: u.id,
+        activity_id: acts[0].id,
+        kind: 'plan',
+        start_at: '2026-11-10T05:00:00Z',
+        end_at: '2026-11-10T07:00:00Z',
+      })
+      .select('id')
+      .single()
+    expect(ins.error).toBeNull()
+    await updateProfile(u.client, u.id, { timezone: 'UTC', dayStart: '06:00' })
+    const p = await getProfile(u.client)
+
+    await moveBlock(u.client, u.id, p, ins.data!.id, new Date('2026-11-10T06:00:00Z'), new Date('2026-11-10T07:30:00Z'))
+
+    const rows = (
+      await listBlocks(u.client, { start: new Date('2026-11-09T06:00:00Z'), end: new Date('2026-11-11T06:00:00Z') })
+    ).sort((x, y) => x.startAt.getTime() - y.startAt.getTime())
+    expect(rows.map((r) => [r.startAt.toISOString(), r.endAt.toISOString()])).toEqual([
+      ['2026-11-10T05:00:00.000Z', '2026-11-10T06:00:00.000Z'],
+      ['2026-11-10T06:00:00.000Z', '2026-11-10T07:30:00.000Z'],
     ])
   })
 })

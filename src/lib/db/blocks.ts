@@ -98,6 +98,31 @@ export async function moveBlock(
     .single()
   if (error) throw error
   const original = toBlock(data as BlockRow)
+
+  // The original may extend past the edited day (e.g. after a day-start change).
+  // Keep those parts: only the edited day's portion is being replaced.
+  const range = dayRangeFor(dateKeyOf(startAt, profile.timezone, profile.dayStart), profile.timezone, profile.dayStart)
+  const keep: NewBlock[] = []
+  if (original.startAt < range.start) {
+    keep.push({ ...originalFields(original), startAt: original.startAt, endAt: minDate(original.endAt, range.start) })
+  }
+  if (original.endAt > range.end) {
+    keep.push({ ...originalFields(original), startAt: maxDate(original.startAt, range.end), endAt: original.endAt })
+  }
+  if (keep.length) {
+    const { error: keepError } = await sb.from('blocks').insert(
+      keep.map((n) => ({
+        user_id: userId,
+        activity_id: n.activityId,
+        kind: n.kind,
+        start_at: n.startAt.toISOString(),
+        end_at: n.endAt.toISOString(),
+        source: n.source,
+      })),
+    )
+    if (keepError) throw keepError
+  }
+
   await saveBlock(
     sb,
     userId,
@@ -106,3 +131,9 @@ export async function moveBlock(
     id,
   )
 }
+
+function originalFields(b: Block) {
+  return { activityId: b.activityId, kind: b.kind, source: b.source }
+}
+const minDate = (a: Date, b: Date) => (a < b ? a : b)
+const maxDate = (a: Date, b: Date) => (a > b ? a : b)

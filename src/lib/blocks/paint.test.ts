@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { paintBlocks } from '@/lib/blocks/paint'
+import { applyPaintResult, paintBlocks } from '@/lib/blocks/paint'
 import type { Block, NewBlock } from '@/lib/types'
 
 const BASE = Date.UTC(2026, 7, 16, 5, 0)
@@ -69,5 +69,21 @@ describe('paintBlocks', () => {
     const r = paintBlocks([block('x', 0, 20), block('y', 40, 60)], paint(20, 40))
     expect(r.updates).toEqual([])
     expect(r.deleteIds).toEqual([])
+  })
+})
+
+describe('applyPaintResult', () => {
+  test('applies deletes, updates and inserts, giving inserted blocks temporary ids', () => {
+    const existing = [block('keep', 100, 120), block('cut', 0, 60), block('gone', 200, 210)]
+    const painted = paint(20, 30)
+    const result = paintBlocks([block('cut', 0, 60)], painted)
+    const out = applyPaintResult([...existing.slice(0, 2), existing[2]], { ...result, deleteIds: ['gone'] })
+    expect(out.find((b) => b.id === 'gone')).toBeUndefined()
+    expect(out.find((b) => b.id === 'keep')).toEqual(block('keep', 100, 120))
+    expect(out.find((b) => b.id === 'cut')).toEqual(block('cut', 0, 20))
+    const added = out.filter((b) => b.id.startsWith('optimistic-'))
+    expect(added.map((b) => [b.startAt, b.endAt])).toEqual(
+      expect.arrayContaining([[at(20), at(30)], [at(30), at(60)]]),
+    )
   })
 })

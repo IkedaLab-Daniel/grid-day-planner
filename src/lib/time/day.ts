@@ -28,8 +28,15 @@ export function dayRangeFor(dateKey: string, tz: string, dayStart: string): DayR
 
 export function dateKeyOf(instant: Date, tz: string, dayStart: string): string {
   const local = new TZDate(instant.getTime(), tz)
-  const localKey = `${local.getFullYear()}-${pad(local.getMonth() + 1)}-${pad(local.getDate())}`
-  const [hh, mm] = parseTime(dayStart)
-  const beforeStart = local.getHours() * 60 + local.getMinutes() < hh * 60 + mm
-  return beforeStart ? shiftDateKey(localKey, -1) : localKey
+  let key = `${local.getFullYear()}-${pad(local.getMonth() + 1)}-${pad(local.getDate())}`
+  // Decide by the real range, not by wall-clock comparison: on DST days the
+  // day-start wall time can be repeated or skipped. Ranges tile the timeline, so
+  // this settles within a step or two.
+  for (let i = 0; i < 3; i++) {
+    const range = dayRangeFor(key, tz, dayStart)
+    if (instant.getTime() < range.start.getTime()) key = shiftDateKey(key, -1)
+    else if (instant.getTime() >= range.end.getTime()) key = shiftDateKey(key, 1)
+    else break
+  }
+  return key
 }

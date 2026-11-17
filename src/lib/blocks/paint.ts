@@ -45,3 +45,11 @@ export function paintBlocks(existing: Block[], paint: NewBlock): PaintResult {
   result.inserts.push(paint)
   return result
 }
+
+/** Apply a PaintResult to a local list (for optimistic UI); inserted blocks get temporary ids. */
+export function applyPaintResult(blocks: Block[], result: PaintResult): Block[] {
+  const updated = new Map(result.updates.map((u) => [u.id, u]))
+  const kept = blocks.filter((b) => !result.deleteIds.includes(b.id)).map((b) => updated.get(b.id) ?? b)
+  const added = result.inserts.map((n, i) => ({ ...n, id: `optimistic-${i}-${n.startAt.getTime()}` }))
+  return [...kept, ...added]
+}

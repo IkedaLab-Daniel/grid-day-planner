@@ -45,3 +45,20 @@ describe('shiftDateKey', () => {
     expect(shiftDateKey('2026-03-01', -1)).toBe('2026-02-28')
   })
 })
+
+describe('dateKeyOf agrees with dayRangeFor (DST-ambiguous and skipped day starts)', () => {
+  test.each([
+    ['America/New_York', '01:30', '2026-11-01'],
+    ['America/New_York', '02:30', '2026-03-08'],
+    ['America/New_York', '01:30', '2026-03-08'],
+    ['Europe/Berlin', '02:30', '2026-10-25'],
+    ['Europe/Berlin', '02:30', '2026-03-29'],
+    ['Australia/Lord_Howe', '02:00', '2026-04-05'],
+  ])('%s with day start %s on %s', (tz, dayStart, key) => {
+    const r = dayRangeFor(key, tz, dayStart)
+    for (let t = r.start.getTime(); t < r.end.getTime(); t += 600_000) {
+      expect(dateKeyOf(new Date(t), tz, dayStart)).toBe(key)
+    }
+    expect(dateKeyOf(new Date(r.start.getTime() - 600_000), tz, dayStart)).toBe(shiftDateKey(key, -1))
+  })
+})

@@ -12,9 +12,10 @@ export interface BlockEditSheetProps {
   onSave(startAt: Date, endAt: Date): void
   onDelete(): void
   onClose(): void
+  error?: string | null
 }
 
-export function BlockEditSheet({ block, range, tz, onSave, onDelete, onClose }: BlockEditSheetProps) {
+export function BlockEditSheet({ block, range, tz, onSave, onDelete, onClose, error }: BlockEditSheetProps) {
   const count = cellCount(range)
   const [start, setStart] = useState(Math.max(cellIndexOf(range, block.startAt), 0))
   const [end, setEnd] = useState(Math.min(cellIndexOf(range, block.endAt), count))
@@ -61,6 +62,11 @@ export function BlockEditSheet({ block, range, tz, onSave, onDelete, onClose }: 
             </select>
           </label>
         </div>
+        {error && (
+          <p role="alert" className="mb-3 text-sm text-red-700">
+            {error}
+          </p>
+        )}
         <div className="flex justify-between gap-2">
           <Button type="button" variant="destructive" onClick={onDelete}>
             Delete

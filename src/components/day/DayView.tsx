@@ -1,12 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useOptimistic, useState, useTransition } from 'react'
+import { applyPaintResult, paintBlocks } from '@/lib/blocks/paint'
 import { computeTotals } from '@/lib/blocks/totals'
+import { rangeFromCells } from '@/lib/grid/grid'
 import { ActivityPicker } from '@/components/day/ActivityPicker'
 import { BlockEditSheet } from '@/components/day/BlockEditSheet'
 import { DayGrid } from '@/components/day/DayGrid'
 import { TotalsStrip } from '@/components/day/TotalsStrip'
-import type { Activity, Block, DayRange, Kind } from '@/lib/types'
+import type { Activity, Block, DayRange, Kind, NewBlock } from '@/lib/types'
 
 export interface PaintInput {
   dateKey: string
@@ -36,10 +38,23 @@ export function DayView({ dateKey, range, tz, blocks, activities, paint, updateB
   const [activeId, setActiveId] = useState<string | null>(null)
   const [layer, setLayer] = useState<Kind>('plan')
   const [editing, setEditing] = useState<Block | null>(null)
-  const totals = computeTotals(blocks, range)
+  const [error, setError] = useState<string | null>(null)
+  const [editError, setEditError] = useState<string | null>(null)
+  const [, startTransition] = useTransition()
+  const [shown, addOptimistic] = useOptimistic(blocks, (current: Block[], painted: NewBlock) =>
+    applyPaintResult(current, paintBlocks(current, painted)),
+  )
+  const totals = computeTotals(shown, range)
+
+  const SAVE_ERROR = 'Could not save. Check your connection and try again.'
 
   return (
     <div data-testid="day-view" data-active-layer={layer} className="flex flex-col gap-4">
+      {error && (
+        <p role="alert" className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+          {error}
+        </p>
+      )}
       <ActivityPicker activities={activities} activeId={activeId} onChange={setActiveId} />
 
       <div className="flex gap-2 md:hidden" role="group" aria-label="Layer">
@@ -64,12 +79,22 @@ export function DayView({ dateKey, range, tz, blocks, activities, paint, updateB
               range={range}
               tz={tz}
               layer={l.kind}
-              blocks={blocks}
+              blocks={shown}
               activities={activities}
               activeActivityId={activeId}
               onBlockTap={setEditing}
               onPaint={({ startCell, endCell }) => {
-                if (activeId) void paint({ dateKey, kind: l.kind, activityId: activeId, startCell, endCell })
+                if (!activeId) return
+                const { start, end } = rangeFromCells(range, startCell, endCell)
+                setError(null)
+                startTransition(async () => {
+                  addOptimistic({ activityId: activeId, kind: l.kind, startAt: start, endAt: end, source: 'manual' })
+                  try {
+                    await paint({ dateKey, kind: l.kind, activityId: activeId, startCell, endCell })
+                  } catch {
+                    setError(SAVE_ERROR)
+                  }
+                })
               }}
             />
           </section>
@@ -84,14 +109,28 @@ export function DayView({ dateKey, range, tz, blocks, activities, paint, updateB
           block={editing}
           range={range}
           tz={tz}
-          onClose={() => setEditing(null)}
-          onSave={async (startAt, endAt) => {
-            await updateBlock({ id: editing.id, startAt: startAt.toISOString(), endAt: endAt.toISOString() })
+          error={editError}
+          onClose={() => {
             setEditing(null)
+            setEditError(null)
+          }}
+          onSave={async (startAt, endAt) => {
+            try {
+              await updateBlock({ id: editing.id, startAt: startAt.toISOString(), endAt: endAt.toISOString() })
+              setEditing(null)
+              setEditError(null)
+            } catch {
+              setEditError(SAVE_ERROR)
+            }
           }}
           onDelete={async () => {
-            await deleteBlock(editing.id)
-            setEditing(null)
+            try {
+              await deleteBlock(editing.id)
+              setEditing(null)
+              setEditError(null)
+            } catch {
+              setEditError(SAVE_ERROR)
+            }
           }}
         />
       )}
