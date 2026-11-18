@@ -1,0 +1,6 @@
+[build.environment]
+  # NEXT_PUBLIC_* values are intentionally inlined into the client bundle by Next.js
+  # (the Supabase URL and anon key are public by design; access is enforced by RLS).
+  # AZURE_OPENAI_DEPLOYMENT is a deployment name, not a credential, and is not used by this app.
+  # Real credentials (service role key, DB password, Azure API key/endpoint) remain scanned.
+  SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY,AZURE_OPENAI_DEPLOYMENT"
