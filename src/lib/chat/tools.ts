@@ -1,10 +1,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { cellStart, cellIndexOf, isOnGrid } from '@/lib/grid/grid'
-import { listActivities } from '@/lib/db/activities'
-import { listBlocks, saveBlock } from '@/lib/db/blocks'
+import { createActivity, listActivities } from '@/lib/db/activities'
+import { deleteBlock, getBlock, listBlocks, moveBlock, saveBlock } from '@/lib/db/blocks'
 import { dateKeyOf, dayRangeFor, shiftDateKey } from '@/lib/time/day'
 import { ceilToCell, floorToCell, formatLocalTime, resolveLocalTime } from '@/lib/chat/time'
-import { matchActivity } from '@/lib/chat/matchActivity'
+import { matchActivity, normaliseName } from '@/lib/chat/matchActivity'
+import { pickColor } from '@/lib/chat/palette'
+import { CATEGORIES } from '@/lib/settings/parse'
+import { isValidActivityName } from '@/lib/settings/validate'
 import type { Activity, Block, Category, DayRange, Kind, Profile } from '@/lib/types'
 
 export interface ToolContext {
@@ -166,4 +169,148 @@ export async function logActivity(
       ? toView(saved, activities, tz)
       : { id: '', activity: match.activity.name, kind: 'actual', start: formatLocalTime(start, tz), end: formatLocalTime(end, tz) },
   }
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const notFound = (): ToolError => ({ ok: false, error: 'NOT_FOUND' })
+
+/** An actual block by id. Missing, foreign (hidden by RLS), malformed ids and plan blocks are all null. */
+async function findActualBlock(ctx: ToolContext, blockId: string): Promise<Block | null> {
+  if (!UUID.test(blockId)) return null
+  const block = await getBlock(ctx.sb, blockId)
+  return block && block.kind === 'actual' ? block : null
+}
+
+function dayOf(ctx: ToolContext, block: Block): { dayKey: string; range: DayRange } {
+  const { timezone, dayStart } = ctx.profile
+  const dayKey = dateKeyOf(block.startAt, timezone, dayStart)
+  return { dayKey, range: dayRangeFor(dayKey, timezone, dayStart) }
+}
+
+async function reread(
+  ctx: ToolContext,
+  range: DayRange,
+  activityId: string,
+  start: Date,
+): Promise<BlockView | null> {
+  const [blocks, activities] = await Promise.all([listBlocks(ctx.sb, range), listActivities(ctx.sb)])
+  const found = blocks.find(
+    (b) => b.kind === 'actual' && b.activityId === activityId && b.startAt.getTime() === start.getTime(),
+  )
+  return found ? toView(found, activities, ctx.profile.timezone) : null
+}
+
+export async function setEnd(
+  ctx: ToolContext,
+  args: { end?: string; blockId?: string },
+): Promise<{ ok: true; block: BlockView; unchanged?: true } | ToolError> {
+  let target: Block | undefined
+  if (args.blockId !== undefined) {
+    const found = await findActualBlock(ctx, args.blockId)
+    if (!found) return notFound()
+    target = found
+  } else {
+    const day = resolveDay(ctx)
+    if ('ok' in day) return day
+    const actual = (await listBlocks(ctx.sb, day.range)).filter((b) => b.kind === 'actual')
+    target = actual.sort((a, b) => a.endAt.getTime() - b.endAt.getTime()).at(-1)
+    if (!target) return { ok: false, error: 'NO_ACTUAL_BLOCK' }
+  }
+
+  const { dayKey, range } = dayOf(ctx, target)
+  const nowCeil = ceilToCell(range, ctx.now)
+  let end: Date
+  if (args.end !== undefined) {
+    const instant = resolveLocalTime(dayKey, args.end, ctx.profile)
+    if (!instant) return invalidTime('end', 'not a valid HH:mm time on that day')
+    end = ceilToCell(range, instant)
+  } else if (dayKey === todayKey(ctx)) {
+    end = nowCeil
+  } else {
+    return invalidTime('end', 'end is required when changing a block on a past day')
+  }
+  if (end.getTime() <= target.startAt.getTime()) return invalidTime('end', 'end must be after the start')
+  if (end.getTime() > nowCeil.getTime()) return invalidTime('end', 'end is in the future')
+  if (!isOnGrid(range, target.startAt, end)) return invalidTime('end', 'the block does not fit on that day')
+
+  const activities = await listActivities(ctx.sb)
+  if (end.getTime() === target.endAt.getTime()) {
+    return { ok: true, unchanged: true, block: toView(target, activities, ctx.profile.timezone) }
+  }
+  await moveBlock(ctx.sb, ctx.userId, ctx.profile, target.id, target.startAt, end)
+  const view = await reread(ctx, range, target.activityId, target.startAt)
+  return { ok: true, block: view ?? toView({ ...target, endAt: end }, activities, ctx.profile.timezone) }
+}
+
+export async function editBlock(
+  ctx: ToolContext,
+  args: { blockId: string; start?: string; end?: string; activity?: string },
+): Promise<{ ok: true; block: BlockView } | ToolError> {
+  const target = await findActualBlock(ctx, args.blockId)
+  if (!target) return notFound()
+  const { dayKey, range } = dayOf(ctx, target)
+  const activities = await listActivities(ctx.sb)
+
+  let activityId = target.activityId
+  if (args.activity !== undefined) {
+    const match = matchActivity(args.activity, activities)
+    if (match.kind === 'none') return { ok: false, error: 'ACTIVITY_NOT_FOUND', names: match.names }
+    if (match.kind === 'ambiguous') return { ok: false, error: 'ACTIVITY_AMBIGUOUS', names: match.names }
+    activityId = match.activity.id
+  }
+
+  let start = target.startAt
+  if (args.start !== undefined) {
+    const instant = resolveLocalTime(dayKey, args.start, ctx.profile)
+    if (!instant) return invalidTime('start', 'not a valid HH:mm time on that day')
+    if (instant.getTime() > ctx.now.getTime()) return invalidTime('start', 'start is in the future')
+    start = floorToCell(range, instant)
+  }
+  const nowCeil = ceilToCell(range, ctx.now)
+  let end = target.endAt
+  if (args.end !== undefined) {
+    const instant = resolveLocalTime(dayKey, args.end, ctx.profile)
+    if (!instant) return invalidTime('end', 'not a valid HH:mm time on that day')
+    end = ceilToCell(range, instant)
+  }
+  if (end.getTime() <= start.getTime()) return invalidTime('end', 'end must be after the start')
+  if (end.getTime() > nowCeil.getTime()) return invalidTime('end', 'end is in the future')
+  if (!isOnGrid(range, start, end)) return invalidTime('end', 'the block does not fit on that day')
+
+  await moveBlock(ctx.sb, ctx.userId, ctx.profile, target.id, start, end, activityId)
+  const view = await reread(ctx, range, activityId, start)
+  return {
+    ok: true,
+    block: view ?? toView({ ...target, activityId, startAt: start, endAt: end }, activities, ctx.profile.timezone),
+  }
+}
+
+export async function removeBlock(
+  ctx: ToolContext,
+  args: { blockId: string },
+): Promise<{ ok: true; deleted: BlockView } | ToolError> {
+  const target = await findActualBlock(ctx, args.blockId)
+  if (!target) return notFound()
+  const activities = await listActivities(ctx.sb)
+  const deleted = toView(target, activities, ctx.profile.timezone)
+  await deleteBlock(ctx.sb, target.id)
+  return { ok: true, deleted }
+}
+
+export async function createActivityTool(
+  ctx: ToolContext,
+  args: { name: string; category?: Category },
+): Promise<{ ok: true; activity: { name: string; category: Category } } | ToolError> {
+  const name = args.name.trim()
+  if (!isValidActivityName(name)) return { ok: false, error: 'INVALID_NAME', reason: 'name must be 1-40 characters' }
+  const category = args.category ?? 'other'
+  if (!CATEGORIES.includes(category)) return { ok: false, error: 'INVALID_NAME', reason: 'unknown category' }
+
+  const activities = await listActivities(ctx.sb)
+  if (activities.some((a) => !a.archivedAt && normaliseName(a.name) === normaliseName(name))) {
+    return { ok: false, error: 'EXISTS', name }
+  }
+  const used = activities.flatMap((a) => (a.colorTo ? [a.color, a.colorTo] : [a.color]))
+  await createActivity(ctx.sb, ctx.userId, { name, color: pickColor(used), colorTo: null, category })
+  return { ok: true, activity: { name, category } }
 }

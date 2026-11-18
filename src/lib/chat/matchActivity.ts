@@ -5,7 +5,8 @@ export type MatchResult =
   | { kind: 'ambiguous'; names: string[] }
   | { kind: 'none'; names: string[] }
 
-const normalise = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+export const normaliseName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+const normalise = normaliseName
 
 /** Match a spoken/typed activity name: exact (normalised) first, then a unique substring. */
 export function matchActivity(name: string, activities: Activity[]): MatchResult {

@@ -3,7 +3,16 @@ import { createTestUser, cleanupTestUsers, type TestUser } from '../../../supaba
 import { archiveActivity, listActivities } from '@/lib/db/activities'
 import { listBlocks, saveBlock } from '@/lib/db/blocks'
 import { dayRangeFor } from '@/lib/time/day'
-import { getDay, logActivity, type ToolContext } from '@/lib/chat/tools'
+import {
+  createActivityTool,
+  editBlock,
+  getDay,
+  logActivity,
+  removeBlock,
+  setEnd,
+  type ToolContext,
+} from '@/lib/chat/tools'
+import { PALETTE } from '@/lib/chat/palette'
 import type { Profile } from '@/lib/types'
 
 const utc: Profile = { timezone: 'UTC', dayStart: '05:00' }
@@ -149,5 +158,135 @@ describe('getDay', () => {
     const names = (r as unknown as { activities: { name: string; archived: boolean }[] }).activities
     expect(names.find((a) => a.name === 'QR SaaS')?.archived).toBe(true)
     expect(names.find((a) => a.name === 'CS50')?.archived).toBe(false)
+  })
+})
+
+const idOf = (r: unknown) => (r as { block: { id: string } }).block.id
+
+describe('setEnd', () => {
+  test('with no end it extends the latest actual block to now, rounded up, giving it a new id', async () => {
+    const first = await logActivity(ctx('2026-08-16T16:12:00Z'), { activity: 'CS50', start: '16:10' })
+    const r = await setEnd(ctx('2026-08-16T16:42:00Z'), {})
+    expect(r).toMatchObject({ ok: true, block: { activity: 'CS50', start: '16:10', end: '16:50' } })
+    expect(idOf(r)).not.toBe(idOf(first))
+    expect(await blocks()).toHaveLength(1)
+  })
+
+  test('an explicit end finishes the block there', async () => {
+    await logActivity(ctx('2026-08-16T16:12:00Z'), { activity: 'CS50', start: '16:10' })
+    const r = await setEnd(ctx('2026-08-16T16:42:00Z'), { end: '16:40' })
+    expect(r).toMatchObject({ ok: true, block: { end: '16:40' } })
+  })
+
+  test('an end that changes nothing is reported as unchanged', async () => {
+    await logActivity(ctx('2026-08-16T16:12:00Z'), { activity: 'CS50', start: '16:10' })
+    expect(await setEnd(ctx('2026-08-16T16:12:00Z'), {})).toMatchObject({ ok: true, unchanged: true })
+  })
+
+  test('rejects an end at the start or in the future, and reports when there is no block', async () => {
+    expect(await setEnd(ctx('2026-08-16T16:42:00Z'), {})).toMatchObject({ ok: false, error: 'NO_ACTUAL_BLOCK' })
+    await logActivity(ctx('2026-08-16T16:12:00Z'), { activity: 'CS50', start: '16:10' })
+    expect(await setEnd(ctx('2026-08-16T16:42:00Z'), { end: '16:10' })).toMatchObject({ ok: false, error: 'INVALID_TIME' })
+    expect(await setEnd(ctx('2026-08-16T16:42:00Z'), { end: '17:30' })).toMatchObject({ ok: false, error: 'INVALID_TIME' })
+  })
+
+  test('extending over the next actual block trims it', async () => {
+    const a = await logActivity(ctx('2026-08-16T16:25:00Z'), { activity: 'CS50', start: '16:00', end: '16:20' })
+    await logActivity(ctx('2026-08-16T16:55:00Z'), { activity: 'DP-700', start: '16:20', end: '16:50' })
+    const r = await setEnd(ctx('2026-08-16T16:55:00Z'), { blockId: idOf(a), end: '16:30' })
+    expect(r).toMatchObject({ ok: true, block: { activity: 'CS50', start: '16:00', end: '16:30' } })
+    const rows = (await blocks()).sort((x, y) => x.startAt.getTime() - y.startAt.getTime())
+    expect(rows.map((b) => [iso(b.startAt), iso(b.endAt)])).toEqual([
+      ['2026-08-16T16:00:00.000Z', '2026-08-16T16:30:00.000Z'],
+      ['2026-08-16T16:30:00.000Z', '2026-08-16T16:50:00.000Z'],
+    ])
+  })
+})
+
+describe('editBlock and removeBlock', () => {
+  test('editBlock changes activity and times in one call', async () => {
+    const first = await logActivity(ctx('2026-08-16T16:12:00Z'), { activity: 'CS50', start: '16:10' })
+    const r = await editBlock(ctx('2026-08-16T16:42:00Z'), { blockId: idOf(first), activity: 'DP-700', start: '16:00', end: '16:30' })
+    expect(r).toMatchObject({ ok: true, block: { activity: 'DP-700', start: '16:00', end: '16:30' } })
+    const rows = await blocks()
+    expect(rows).toHaveLength(1)
+    expect(rows[0].source).toBe('ai')
+  })
+
+  test('editBlock rejects times that are not on the grid or in the future', async () => {
+    const first = await logActivity(ctx('2026-08-16T16:12:00Z'), { activity: 'CS50', start: '16:10' })
+    const r = await editBlock(ctx('2026-08-16T16:42:00Z'), { blockId: idOf(first), end: '18:00' })
+    expect(r).toMatchObject({ ok: false, error: 'INVALID_TIME' })
+  })
+
+  test('unknown ids are NOT_FOUND', async () => {
+    const nobody = '00000000-0000-0000-0000-000000000000'
+    expect(await editBlock(ctx('2026-08-16T16:42:00Z'), { blockId: nobody, end: '16:30' })).toMatchObject({ ok: false, error: 'NOT_FOUND' })
+    expect(await removeBlock(ctx('2026-08-16T16:42:00Z'), { blockId: nobody })).toMatchObject({ ok: false, error: 'NOT_FOUND' })
+  })
+
+  test('removeBlock deletes the block and returns what was deleted', async () => {
+    const first = await logActivity(ctx('2026-08-16T16:12:00Z'), { activity: 'CS50', start: '16:10' })
+    const r = await removeBlock(ctx('2026-08-16T16:42:00Z'), { blockId: idOf(first) })
+    expect(r).toMatchObject({ ok: true, deleted: { activity: 'CS50', start: '16:10', end: '16:20' } })
+    expect(await blocks()).toHaveLength(0)
+  })
+})
+
+describe('blocks that must not be touched', () => {
+  let other: TestUser
+  beforeAll(async () => {
+    other = await createTestUser('UTC')
+  })
+  const otherCtx = (now: string): ToolContext => ({ sb: other.client, userId: other.id, profile: utc, now: new Date(now) })
+
+  test("another user's block id is NOT_FOUND for every tool and the block is untouched", async () => {
+    const mine = await logActivity(ctx('2026-08-16T16:12:00Z'), { activity: 'CS50', start: '16:10' })
+    const id = idOf(mine)
+    const now = '2026-08-16T16:42:00Z'
+    expect(await setEnd(otherCtx(now), { blockId: id, end: '16:40' })).toMatchObject({ ok: false, error: 'NOT_FOUND' })
+    expect(await editBlock(otherCtx(now), { blockId: id, end: '16:40' })).toMatchObject({ ok: false, error: 'NOT_FOUND' })
+    expect(await removeBlock(otherCtx(now), { blockId: id })).toMatchObject({ ok: false, error: 'NOT_FOUND' })
+    const rows = await blocks()
+    expect(rows.map((b) => [b.id, iso(b.endAt)])).toEqual([[id, '2026-08-16T16:20:00.000Z']])
+  })
+
+  test('plan blocks cannot be changed by chat tools', async () => {
+    const acts = await listActivities(user.client)
+    await saveBlock(user.client, user.id, utc, {
+      activityId: acts.find((a) => a.name === 'CS50')!.id,
+      kind: 'plan',
+      startAt: new Date('2026-08-16T16:00:00Z'),
+      endAt: new Date('2026-08-16T17:00:00Z'),
+      source: 'manual',
+    })
+    const [plan] = await blocks()
+    const now = '2026-08-16T16:42:00Z'
+    expect(await editBlock(ctx(now), { blockId: plan.id, end: '16:30' })).toMatchObject({ ok: false, error: 'NOT_FOUND' })
+    expect(await removeBlock(ctx(now), { blockId: plan.id })).toMatchObject({ ok: false, error: 'NOT_FOUND' })
+    expect(await blocks()).toHaveLength(1)
+  })
+})
+
+describe('createActivityTool', () => {
+  test('creates an activity with category other and an unused palette colour', async () => {
+    const r = await createActivityTool(ctx('2026-08-16T16:12:00Z'), { name: 'Gym' })
+    expect(r).toMatchObject({ ok: true, activity: { name: 'Gym', category: 'other' } })
+    const gym = (await listActivities(user.client)).find((a) => a.name === 'Gym')!
+    expect(PALETTE.map((c) => c.toLowerCase())).toContain(gym.color.toLowerCase())
+    expect(gym.colorTo).toBeNull()
+  })
+
+  test('stores a given category and gives the next activity a different colour', async () => {
+    await createActivityTool(ctx('2026-08-16T16:12:00Z'), { name: 'Run', category: 'exercise' })
+    const acts = await listActivities(user.client)
+    const run = acts.find((a) => a.name === 'Run')!
+    expect(run.category).toBe('exercise')
+    expect(run.color.toLowerCase()).not.toBe(acts.find((a) => a.name === 'Gym')!.color.toLowerCase())
+  })
+
+  test('a duplicate name is EXISTS and a blank name is INVALID_NAME', async () => {
+    expect(await createActivityTool(ctx('2026-08-16T16:12:00Z'), { name: 'gym' })).toMatchObject({ ok: false, error: 'EXISTS' })
+    expect(await createActivityTool(ctx('2026-08-16T16:12:00Z'), { name: '   ' })).toMatchObject({ ok: false, error: 'INVALID_NAME' })
   })
 })

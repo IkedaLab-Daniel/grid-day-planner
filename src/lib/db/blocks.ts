@@ -34,6 +34,17 @@ export async function listBlocks(sb: SupabaseClient, range: DayRange): Promise<B
   return (data as BlockRow[]).map(toBlock)
 }
 
+/** One block by id; null when it does not exist or is not visible to this user. */
+export async function getBlock(sb: SupabaseClient, id: string): Promise<Block | null> {
+  const { data, error } = await sb
+    .from('blocks')
+    .select('id, activity_id, kind, start_at, end_at, source')
+    .eq('id', id)
+    .maybeSingle()
+  if (error) throw error
+  return data ? toBlock(data as BlockRow) : null
+}
+
 export async function deleteBlock(sb: SupabaseClient, id: string): Promise<void> {
   const { error } = await sb.from('blocks').delete().eq('id', id)
   if (error) throw error
@@ -90,6 +101,7 @@ export async function moveBlock(
   id: string,
   startAt: Date,
   endAt: Date,
+  activityId?: string,
 ): Promise<void> {
   const { data, error } = await sb
     .from('blocks')
@@ -127,7 +139,7 @@ export async function moveBlock(
     sb,
     userId,
     profile,
-    { activityId: original.activityId, kind: original.kind, source: original.source, startAt, endAt },
+    { activityId: activityId ?? original.activityId, kind: original.kind, source: original.source, startAt, endAt },
     id,
   )
 }

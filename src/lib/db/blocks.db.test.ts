@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'
 import { createTestUser, cleanupTestUsers, type TestUser } from '../../../supabase/tests/helpers'
-import { listBlocks, saveBlock, moveBlock } from '@/lib/db/blocks'
+import { getBlock, listBlocks, saveBlock, moveBlock } from '@/lib/db/blocks'
 import { listActivities } from '@/lib/db/activities'
 import { getProfile, updateProfile } from '@/lib/db/profile'
 import { dayRangeFor } from '@/lib/time/day'
@@ -117,6 +117,27 @@ describe('moveBlock on a block that crosses the current day boundary', () => {
     expect(rows.map((r) => [r.startAt.toISOString(), r.endAt.toISOString()])).toEqual([
       ['2026-11-10T05:00:00.000Z', '2026-11-10T06:00:00.000Z'],
       ['2026-11-10T06:00:00.000Z', '2026-11-10T07:30:00.000Z'],
+    ])
+  })
+})
+
+describe('getBlock and moveBlock with an activity', () => {
+  const d = (t: string) => new Date(`2026-09-01T${t}:00Z`)
+  const range = dayRangeFor('2026-09-01', 'UTC', '05:00')
+
+  test('getBlock returns a block by id and null for an unknown id', async () => {
+    await saveBlock(user.client, user.id, profile, { activityId: actA, kind: 'plan', startAt: d('09:00'), endAt: d('10:00'), source: 'manual' })
+    const [b] = await listBlocks(user.client, range)
+    expect(await getBlock(user.client, b.id)).toMatchObject({ id: b.id, activityId: actA, kind: 'plan' })
+    expect(await getBlock(user.client, '00000000-0000-0000-0000-000000000000')).toBeNull()
+  })
+
+  test('moveBlock with an activityId swaps the activity and keeps the times', async () => {
+    const [b] = await listBlocks(user.client, range)
+    await moveBlock(user.client, user.id, profile, b.id, d('09:00'), d('10:00'), actB)
+    const rows = await listBlocks(user.client, range)
+    expect(rows.map((r) => [r.activityId, r.startAt.toISOString(), r.endAt.toISOString()])).toEqual([
+      [actB, '2026-09-01T09:00:00.000Z', '2026-09-01T10:00:00.000Z'],
     ])
   })
 })
