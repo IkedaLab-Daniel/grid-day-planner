@@ -146,9 +146,13 @@ RLS: select and insert only where `user_id = auth.uid()`; no update/delete polic
 
 - `POST /api/chat` `{ message: string }` → `{ reply: string, changed: boolean }`.
   Node runtime. Requires a signed-in user (JSON 401, not the login redirect). Message
-  length ≤ 1000 chars. Rate limit: 30 user messages per rolling hour per user (429),
-  counted from `chat_messages`. Model/network failure → 503 with a friendly message and
-  nothing half-saved: the user message is stored only once the turn completes.
+  length ≤ 1000 chars. Rate limit: 30 attempts per rolling hour per
+  user (429) and one turn at a time per user (429), both reserved atomically by the
+  `chat_begin_turn` database function before any model call (table `chat_turns`; failed
+  attempts count). A model/network failure before any write → 503 with a friendly message
+  and nothing stored (messages are stored only once the turn completes); a failure after a
+  write already succeeded is not an error: the turn is stored with a short "I saved your
+  change but couldn't finish" reply and `changed: true`.
 - `GET /api/chat` → the last 20 messages for the sheet.
 - The LangGraph agent is a tool-calling loop (model node ↔ tools node) with at most 6
   tool iterations per message; hitting the cap replies that it got stuck and asks the

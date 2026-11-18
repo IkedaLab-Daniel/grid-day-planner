@@ -14,7 +14,7 @@ export class ScriptedChatModel extends BaseChatModel {
 
   constructor(
     private readonly steps: AIMessage[],
-    private readonly opts: { repeatLast?: boolean } = {},
+    private readonly opts: { repeatLast?: boolean; delayMs?: number } = {},
   ) {
     super({})
   }
@@ -30,6 +30,7 @@ export class ScriptedChatModel extends BaseChatModel {
 
   async _generate(messages: BaseMessage[]): Promise<ChatResult> {
     this.calls.push(messages)
+    if (this.opts.delayMs) await new Promise((resolve) => setTimeout(resolve, this.opts.delayMs))
     const i = this.opts.repeatLast ? Math.min(this.index, this.steps.length - 1) : this.index
     const step = this.steps[i]
     const repeat = i !== this.index
@@ -45,6 +46,6 @@ export class ScriptedChatModel extends BaseChatModel {
   }
 }
 
-export function scriptedModel(steps: AIMessage[], opts?: { repeatLast?: boolean }): ScriptedChatModel {
+export function scriptedModel(steps: AIMessage[], opts?: { repeatLast?: boolean; delayMs?: number }): ScriptedChatModel {
   return new ScriptedChatModel(steps, opts)
 }

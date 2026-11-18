@@ -42,6 +42,25 @@ export function resolveLocalTime(dayKey: string, hhmm: string, profile: Profile)
   return candidates[0] ?? null
 }
 
+/** The longest block an end time may reach by wrapping past the day boundary (e.g. sleep). */
+export const MAX_WRAPPED_BLOCK_HOURS = 16
+
+/**
+ * The instant of an end time for a block that starts at `start` on grid day `dayKey`.
+ * Normally it is the wall time later in the same grid day; if that is not after the start
+ * (e.g. start 23:30, end "06:30" with a 05:00 day start) it wraps into the next grid day, but
+ * only up to MAX_WRAPPED_BLOCK_HOURS so a mistyped earlier time never becomes a 23-hour block.
+ * Null if malformed, skipped by DST, equal to or before the start, or too long when wrapped.
+ */
+export function resolveEnd(dayKey: string, start: Date, hhmm: string, profile: Profile): Date | null {
+  const sameDay = resolveLocalTime(dayKey, hhmm, profile)
+  if (sameDay && sameDay.getTime() > start.getTime()) return sameDay
+  const wrapped = resolveLocalTime(shiftDateKey(dayKey, 1), hhmm, profile)
+  const longest = MAX_WRAPPED_BLOCK_HOURS * 3600_000
+  if (wrapped && wrapped.getTime() > start.getTime() && wrapped.getTime() - start.getTime() <= longest) return wrapped
+  return null
+}
+
 export function floorToCell(range: DayRange, instant: Date): Date {
   return cellStart(range, cellIndexOf(range, instant))
 }

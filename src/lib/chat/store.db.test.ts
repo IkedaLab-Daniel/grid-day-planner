@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'
 import { createTestUser, cleanupTestUsers, type TestUser } from '../../../supabase/tests/helpers'
-import { countUserMessagesSince, loadHistory, saveTurn } from '@/lib/chat/store'
+import { loadHistory, saveTurn } from '@/lib/chat/store'
 
 let user: TestUser
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -38,19 +38,5 @@ describe('chat store', () => {
     }
     const h = await loadHistory(user.client, 2)
     expect(h.map((m) => m.content)).toEqual(['u3', 'a3'])
-  })
-
-  test('countUserMessagesSince counts only user rows after the cutoff', async () => {
-    const cutoff = new Date(Date.now() - 3600_000)
-    const before = await countUserMessagesSince(user.client, cutoff)
-    await saveTurn(user.client, user.id, {
-      user: 'old one',
-      assistant: 'ok',
-      toolCalls: [],
-      startedAt: new Date(Date.now() - 2 * 3600_000),
-    })
-    expect(await countUserMessagesSince(user.client, cutoff)).toBe(before)
-    await saveTurn(user.client, user.id, { user: 'new one', assistant: 'ok', toolCalls: [], startedAt: new Date() })
-    expect(await countUserMessagesSince(user.client, cutoff)).toBe(before + 1)
   })
 })

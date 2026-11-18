@@ -94,6 +94,19 @@ describe('logActivity', () => {
     ])
   })
 
+  test('switching inside the current block does not ask about a gap, even with an earlier block', async () => {
+    await logActivity(ctx('2026-08-16T09:05:00Z'), { activity: 'AI-101', start: '08:00', end: '08:30' })
+    await logActivity(ctx('2026-08-16T09:05:00Z'), { activity: 'CS50', start: '08:30', end: '09:00' })
+    const r = await logActivity(ctx('2026-08-16T09:05:00Z'), { activity: 'DP-700', start: '08:50' })
+    expect(r).toMatchObject({ ok: true, block: { activity: 'DP-700', start: '08:50', end: '09:10' } })
+    const rows = (await blocks()).sort((a, b) => a.startAt.getTime() - b.startAt.getTime())
+    expect(rows.map((b) => [iso(b.startAt), iso(b.endAt)])).toEqual([
+      ['2026-08-16T08:00:00.000Z', '2026-08-16T08:30:00.000Z'],
+      ['2026-08-16T08:30:00.000Z', '2026-08-16T08:50:00.000Z'],
+      ['2026-08-16T08:50:00.000Z', '2026-08-16T09:10:00.000Z'],
+    ])
+  })
+
   test('an unknown activity lists the known names; an ambiguous one is flagged', async () => {
     const missing = await logActivity(ctx('2026-08-16T16:12:00Z'), { activity: 'Gym', start: '16:10' })
     expect(missing).toMatchObject({ ok: false, error: 'ACTIVITY_NOT_FOUND' })
@@ -148,6 +161,67 @@ describe('logActivity', () => {
     expect(rows.map((b) => [iso(b.startAt), iso(b.endAt)])).toEqual([
       ['2026-03-08T07:30:00.000Z', '2026-03-08T07:50:00.000Z'],
     ])
+  })
+})
+
+describe('blocks that end at or cross the day boundary', () => {
+  const midnightStart: Profile = { timezone: 'UTC', dayStart: '00:00' }
+  const wide = { start: new Date('2026-08-16T05:00:00Z'), end: new Date('2026-08-17T10:00:00Z') }
+  const spans = async () =>
+    (await listBlocks(user.client, wide))
+      .filter((b) => b.kind === 'actual')
+      .sort((a, b) => a.startAt.getTime() - b.startAt.getTime())
+      .map((b) => [iso(b.startAt), iso(b.endAt)])
+
+  test('"22:00 to midnight" works with a 00:00 day start', async () => {
+    const r = await logActivity(ctx('2026-08-17T00:30:00Z', midnightStart), {
+      activity: 'CS50',
+      start: '22:00',
+      end: '00:00',
+      date: '2026-08-16',
+    })
+    expect(r).toMatchObject({ ok: true, block: { start: '22:00', end: '00:00' } })
+    expect(await spans()).toEqual([['2026-08-16T22:00:00.000Z', '2026-08-17T00:00:00.000Z']])
+  })
+
+  test('sleep 23:30 to 06:30 with a 05:00 day start is stored across the boundary and reported as asked', async () => {
+    const r = await logActivity(ctx('2026-08-17T07:00:00Z'), {
+      activity: 'CS50',
+      start: '23:30',
+      end: '06:30',
+      date: '2026-08-16',
+    })
+    expect(r).toMatchObject({ ok: true, block: { start: '23:30', end: '06:30' } })
+    expect(await spans()).toEqual([
+      ['2026-08-16T23:30:00.000Z', '2026-08-17T05:00:00.000Z'],
+      ['2026-08-17T05:00:00.000Z', '2026-08-17T06:30:00.000Z'],
+    ])
+  })
+
+  test('set_end can stretch a block across the day boundary', async () => {
+    const sleep = await logActivity(ctx('2026-08-17T07:00:00Z'), {
+      activity: 'CS50',
+      start: '23:30',
+      end: '04:00',
+      date: '2026-08-16',
+    })
+    const r = await setEnd(ctx('2026-08-17T07:00:00Z'), { blockId: idOf(sleep), end: '06:30' })
+    expect(r).toMatchObject({ ok: true, block: { start: '23:30', end: '06:30' } })
+    expect(await spans()).toEqual([
+      ['2026-08-16T23:30:00.000Z', '2026-08-17T05:00:00.000Z'],
+      ['2026-08-17T05:00:00.000Z', '2026-08-17T06:30:00.000Z'],
+    ])
+  })
+
+  test('an end earlier than the start is still rejected, not turned into a 23-hour block', async () => {
+    const r = await logActivity(ctx('2026-08-17T07:00:00Z'), {
+      activity: 'CS50',
+      start: '12:00',
+      end: '11:00',
+      date: '2026-08-16',
+    })
+    expect(r).toMatchObject({ ok: false, error: 'INVALID_TIME' })
+    expect(await spans()).toEqual([])
   })
 })
 

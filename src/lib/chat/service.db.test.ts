@@ -18,6 +18,7 @@ beforeAll(async () => {
 })
 beforeEach(async () => {
   await admin.from('chat_messages').delete().eq('user_id', user.id)
+  await admin.from('chat_turns').delete().eq('user_id', user.id)
   await admin.from('blocks').delete().eq('user_id', user.id)
 })
 afterAll(cleanupTestUsers)
@@ -44,6 +45,16 @@ describe('sendMessage', () => {
     expect(await rows()).toHaveLength(0)
   })
 
+  test('a failure after a write stores the turn and still reports the change instead of a 503', async () => {
+    const model = scriptedModel([call('log_activity', { activity: 'CS50', start: '16:10' })])
+    const r = await sendMessage(deps(model), 'I started CS50 at 4:10')
+    expect(r.changed).toBe(true)
+    expect(r.reply.toLowerCase()).toContain('saved')
+    const stored = await rows()
+    expect(stored.map((m) => m.role)).toEqual(['user', 'assistant'])
+    expect(await listBlocks(user.client, dayRangeFor('2026-08-16', 'UTC', '05:00'))).toHaveLength(1)
+  })
+
   test('empty, whitespace and over-long messages are 400 and never reach the model', async () => {
     const model = scriptedModel([new AIMessage('x')])
     for (const bad of ['', '   ', 'a'.repeat(MAX_MESSAGE_LENGTH + 1)]) {
@@ -53,28 +64,46 @@ describe('sendMessage', () => {
     expect(MAX_MESSAGE_LENGTH).toBe(1000)
   })
 
-  test('the 31st user message within an hour is 429, but messages older than an hour do not count', async () => {
-    const old = Array.from({ length: RATE_LIMIT_PER_HOUR }, (_, i) => ({
-      user_id: user.id,
-      role: 'user',
-      content: `old ${i}`,
-      created_at: new Date(Date.now() - 2 * 3600_000 + i * 1000).toISOString(),
-    }))
-    await admin.from('chat_messages').insert(old)
+  test('the limit counts attempts in the last hour; older attempts and other states do not', async () => {
+    const turns = (ageMs: number) =>
+      Array.from({ length: RATE_LIMIT_PER_HOUR }, (_, i) => ({
+        user_id: user.id,
+        started_at: new Date(Date.now() - ageMs + i * 1000).toISOString(),
+        finished_at: new Date(Date.now() - ageMs + i * 1000 + 500).toISOString(),
+      }))
+    await admin.from('chat_turns').insert(turns(2 * 3600_000))
     const ok = await sendMessage(deps(scriptedModel([new AIMessage('fine')])), 'hello')
     expect(ok.reply).toBe('fine')
 
-    await admin.from('chat_messages').delete().eq('user_id', user.id)
-    const recent = Array.from({ length: RATE_LIMIT_PER_HOUR }, (_, i) => ({
-      user_id: user.id,
-      role: 'user',
-      content: `recent ${i}`,
-      created_at: new Date(Date.now() - 60_000 + i).toISOString(),
-    }))
-    await admin.from('chat_messages').insert(recent)
+    await admin.from('chat_turns').delete().eq('user_id', user.id)
+    await admin.from('chat_turns').insert(turns(60_000))
     const model = scriptedModel([new AIMessage('never')])
     await expect(sendMessage(deps(model), 'one more')).rejects.toMatchObject({ status: 429 })
     expect(model.calls).toHaveLength(0)
+  })
+
+  test('a failed turn still counts as an attempt and is marked finished', async () => {
+    await expect(sendMessage(deps(scriptedModel([])), 'hello')).rejects.toMatchObject({ status: 503 })
+    const { data } = await admin.from('chat_turns').select('finished_at').eq('user_id', user.id)
+    expect(data).toHaveLength(1)
+    expect(data![0].finished_at).not.toBeNull()
+  })
+
+  test('invalid messages are rejected before they count as an attempt', async () => {
+    await expect(sendMessage(deps(scriptedModel([new AIMessage('x')])), '   ')).rejects.toMatchObject({ status: 400 })
+    const { data } = await admin.from('chat_turns').select('id').eq('user_id', user.id)
+    expect(data).toHaveLength(0)
+  })
+
+  test('only one turn runs at a time per user', async () => {
+    const slow = () => scriptedModel([new AIMessage('done')], { delayMs: 400 })
+    const results = await Promise.allSettled([
+      sendMessage(deps(slow()), 'first'),
+      sendMessage(deps(slow()), 'second'),
+    ])
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
+    const rejected = results.find((r) => r.status === 'rejected') as PromiseRejectedResult
+    expect(rejected.reason).toMatchObject({ name: 'ChatError', status: 429 })
   })
 
   test('only the last 20 messages are replayed to the model', async () => {

@@ -88,6 +88,19 @@ describe('runChatTurn', () => {
     expect(model.bindOptions).toMatchObject({ parallel_tool_calls: false })
   })
 
+  test('a model failure after a successful write still reports what was saved', async () => {
+    // One scripted step, then the model throws (no more steps) as a timeout would.
+    const r = await run(scriptedModel([call('log_activity', { activity: 'CS50', start: '16:10' })]))
+    expect(r.changed).toBe(true)
+    expect(r.reply.toLowerCase()).toContain('saved')
+    expect(r.toolCalls).toHaveLength(1)
+    expect(await listBlocks(user.client, day)).toHaveLength(1)
+  })
+
+  test('a model failure before any write still throws', async () => {
+    await expect(run(scriptedModel([]))).rejects.toThrow()
+  })
+
   test('a model that never stops calling tools is cut off with a stuck reply', async () => {
     const r = await run(scriptedModel([call('get_day', {})], { repeatLast: true }))
     expect(r.reply.toLowerCase()).toContain('stuck')

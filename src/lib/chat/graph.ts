@@ -26,6 +26,9 @@ export interface ToolCallRecord {
 
 export const STUCK_REPLY = "I got stuck on that one. Could you rephrase what you'd like me to do?"
 
+export const PARTIAL_REPLY =
+  "I saved your change, but I couldn't finish my reply. Please check the grid and tell me if anything looks off."
+
 const WRITE_TOOLS = new Set(['log_activity', 'set_end', 'edit_block', 'delete_block', 'create_activity'])
 
 const hhmm = z.string().describe('24-hour HH:mm in the user timezone, e.g. 16:10')
@@ -169,7 +172,13 @@ export async function runChatTurn(input: {
     )
     for await (const state of stream) messages = state.messages
   } catch (e) {
-    if (!(e instanceof GraphRecursionError)) throw e
+    if (!(e instanceof GraphRecursionError)) {
+      // The model or network failed part-way. If a write already went through, say so rather than
+      // pretending nothing happened (the caller would show an error and the grid would look stale).
+      const written = toolCallsFromMessages(messages)
+      if (didChange(written)) return { reply: PARTIAL_REPLY, changed: true, toolCalls: written }
+      throw e
+    }
     stuck = true
   }
 

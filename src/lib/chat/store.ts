@@ -54,12 +54,19 @@ export async function saveTurn(
   if (error) throw error
 }
 
-export async function countUserMessagesSince(sb: SupabaseClient, since: Date): Promise<number> {
-  const { count, error } = await sb
-    .from('chat_messages')
-    .select('id', { count: 'exact', head: true })
-    .eq('role', 'user')
-    .gte('created_at', since.toISOString())
+export type TurnStart = { status: 'ok'; id: string } | { status: 'rate_limited' } | { status: 'busy' }
+
+/**
+ * Reserve a chat turn: counts the attempt against the hourly limit and refuses while another
+ * turn for this user is still running. Atomic in the database.
+ */
+export async function beginTurn(sb: SupabaseClient, maxPerHour: number): Promise<TurnStart> {
+  const { data, error } = await sb.rpc('chat_begin_turn', { max_per_hour: maxPerHour })
   if (error) throw error
-  return count ?? 0
+  return data as TurnStart
+}
+
+/** Mark a reserved turn finished. Best effort: an unfinished turn stops blocking after two minutes. */
+export async function endTurn(sb: SupabaseClient, id: string): Promise<void> {
+  await sb.rpc('chat_end_turn', { turn_id: id })
 }

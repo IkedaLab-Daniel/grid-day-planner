@@ -3,7 +3,7 @@ import { cellStart, cellIndexOf, isOnGrid } from '@/lib/grid/grid'
 import { createActivity, listActivities } from '@/lib/db/activities'
 import { deleteBlock, getBlock, listBlocks, moveBlock, saveBlock } from '@/lib/db/blocks'
 import { dateKeyOf, dayRangeFor, shiftDateKey } from '@/lib/time/day'
-import { ceilToCell, floorToCell, formatLocalTime, resolveLocalTime } from '@/lib/chat/time'
+import { MAX_WRAPPED_BLOCK_HOURS, ceilToCell, floorToCell, formatLocalTime, isHHmm, resolveEnd, resolveLocalTime } from '@/lib/chat/time'
 import { matchActivity, normaliseName } from '@/lib/chat/matchActivity'
 import { pickColor } from '@/lib/chat/palette'
 import { CATEGORIES } from '@/lib/settings/parse'
@@ -46,6 +46,26 @@ export const invalidTime = (field: string, reason: string): ToolError => ({
   field,
   reason,
 })
+
+/** An end time for a block starting at `start`, rounded up to a cell. May lie past the day boundary. */
+function endFor(ctx: ToolContext, dayKey: string, range: DayRange, start: Date, hhmm: string): Date | ToolError {
+  if (!isHHmm(hhmm)) return invalidTime('end', 'not a valid HH:mm time')
+  const instant = resolveEnd(dayKey, start, hhmm, ctx.profile)
+  if (!instant) {
+    return invalidTime(
+      'end',
+      `end must be after the start (a block that crosses the day boundary can run at most ${MAX_WRAPPED_BLOCK_HOURS} hours)`,
+    )
+  }
+  return ceilToCell(range, instant)
+}
+
+/** A block may run past the day end (the write splits it); only the part inside the day must sit on the grid. */
+function fitsGrid(range: DayRange, start: Date, end: Date): boolean {
+  return isOnGrid(range, start, end.getTime() > range.end.getTime() ? range.end : end)
+}
+
+const withEnd = (view: BlockView, end: Date, tz: string): BlockView => ({ ...view, end: formatLocalTime(end, tz) })
 
 export function todayKey(ctx: ToolContext): string {
   return dateKeyOf(ctx.now, ctx.profile.timezone, ctx.profile.dayStart)
@@ -129,9 +149,9 @@ export async function logActivity(
   const nowCeil = ceilToCell(range, ctx.now)
   let end: Date
   if (args.end !== undefined) {
-    const endInstant = resolveLocalTime(dayKey, args.end, ctx.profile)
-    if (!endInstant) return invalidTime('end', 'not a valid HH:mm time on that day')
-    end = ceilToCell(range, endInstant)
+    const resolved = endFor(ctx, dayKey, range, start, args.end)
+    if ('ok' in resolved) return resolved
+    end = resolved
   } else if (dayKey === todayKey(ctx)) {
     end = nowCeil.getTime() > start.getTime() ? nowCeil : cellStart(range, cellIndexOf(range, start) + 1)
   } else {
@@ -139,7 +159,7 @@ export async function logActivity(
   }
   if (end.getTime() <= start.getTime()) return invalidTime('end', 'end must be after start')
   if (end.getTime() > nowCeil.getTime()) return invalidTime('end', 'end is in the future')
-  if (!isOnGrid(range, start, end)) return invalidTime('end', 'the block does not fit on that day')
+  if (!fitsGrid(range, start, end)) return invalidTime('end', 'the block does not fit on that day')
 
   const actual = (await listBlocks(ctx.sb, range)).filter((b) => b.kind === 'actual')
 
@@ -153,9 +173,10 @@ export async function logActivity(
   if (same) return { ok: true, unchanged: true, block: toView(same, activities, tz) }
 
   if (args.gap !== 'skip') {
-    const earlier = actual.filter((b) => b.endAt.getTime() <= start.getTime())
-    if (earlier.length > 0) {
-      const prevEnd = new Date(Math.max(...earlier.map((b) => b.endAt.getTime())))
+    // Blocks that begin before the new start: if one of them covers the start there is no gap.
+    const before = actual.filter((b) => b.startAt.getTime() < start.getTime())
+    if (before.length > 0) {
+      const prevEnd = new Date(Math.max(...before.map((b) => b.endAt.getTime())))
       if (prevEnd.getTime() < start.getTime()) {
         return {
           ok: false,
@@ -183,7 +204,7 @@ export async function logActivity(
   return {
     ok: true,
     block: saved
-      ? toView(saved, activities, tz)
+      ? withEnd(toView(saved, activities, tz), end, tz)
       : { id: '', activity: match.activity.name, kind: 'actual', start: formatLocalTime(start, tz), end: formatLocalTime(end, tz) },
   }
 }
@@ -238,9 +259,9 @@ export async function setEnd(
   const nowCeil = ceilToCell(range, ctx.now)
   let end: Date
   if (args.end !== undefined) {
-    const instant = resolveLocalTime(dayKey, args.end, ctx.profile)
-    if (!instant) return invalidTime('end', 'not a valid HH:mm time on that day')
-    end = ceilToCell(range, instant)
+    const resolved = endFor(ctx, dayKey, range, target.startAt, args.end)
+    if ('ok' in resolved) return resolved
+    end = resolved
   } else if (dayKey === todayKey(ctx)) {
     end = nowCeil
   } else {
@@ -248,7 +269,7 @@ export async function setEnd(
   }
   if (end.getTime() <= target.startAt.getTime()) return invalidTime('end', 'end must be after the start')
   if (end.getTime() > nowCeil.getTime()) return invalidTime('end', 'end is in the future')
-  if (!isOnGrid(range, target.startAt, end)) return invalidTime('end', 'the block does not fit on that day')
+  if (!fitsGrid(range, target.startAt, end)) return invalidTime('end', 'the block does not fit on that day')
 
   const activities = await listActivities(ctx.sb)
   if (end.getTime() === target.endAt.getTime()) {
@@ -256,7 +277,8 @@ export async function setEnd(
   }
   await moveBlock(ctx.sb, ctx.userId, ctx.profile, target.id, target.startAt, end)
   const view = await reread(ctx, range, target.activityId, target.startAt)
-  return { ok: true, block: view ?? toView({ ...target, endAt: end }, activities, ctx.profile.timezone) }
+  const tz = ctx.profile.timezone
+  return { ok: true, block: withEnd(view ?? toView({ ...target, endAt: end }, activities, tz), end, tz) }
 }
 
 export async function editBlock(
@@ -286,13 +308,13 @@ export async function editBlock(
   const nowCeil = ceilToCell(range, ctx.now)
   let end = target.endAt
   if (args.end !== undefined) {
-    const instant = resolveLocalTime(dayKey, args.end, ctx.profile)
-    if (!instant) return invalidTime('end', 'not a valid HH:mm time on that day')
-    end = ceilToCell(range, instant)
+    const resolved = endFor(ctx, dayKey, range, start, args.end)
+    if ('ok' in resolved) return resolved
+    end = resolved
   }
   if (end.getTime() <= start.getTime()) return invalidTime('end', 'end must be after the start')
   if (end.getTime() > nowCeil.getTime()) return invalidTime('end', 'end is in the future')
-  if (!isOnGrid(range, start, end)) return invalidTime('end', 'the block does not fit on that day')
+  if (!fitsGrid(range, start, end)) return invalidTime('end', 'the block does not fit on that day')
 
   if (
     activityId === target.activityId &&
@@ -304,9 +326,10 @@ export async function editBlock(
 
   await moveBlock(ctx.sb, ctx.userId, ctx.profile, target.id, start, end, activityId)
   const view = await reread(ctx, range, activityId, start)
+  const tz = ctx.profile.timezone
   return {
     ok: true,
-    block: view ?? toView({ ...target, activityId, startAt: start, endAt: end }, activities, ctx.profile.timezone),
+    block: withEnd(view ?? toView({ ...target, activityId, startAt: start, endAt: end }, activities, tz), end, tz),
   }
 }
 

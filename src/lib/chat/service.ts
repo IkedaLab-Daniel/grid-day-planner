@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { getProfile } from '@/lib/db/profile'
 import { runChatTurn, type ToolCallRecord } from '@/lib/chat/graph'
-import { countUserMessagesSince, loadHistory, saveTurn, type ChatMessage } from '@/lib/chat/store'
+import { beginTurn, endTurn, loadHistory, saveTurn, type ChatMessage } from '@/lib/chat/store'
 
 export const MAX_MESSAGE_LENGTH = 1000
 export const RATE_LIMIT_PER_HOUR = 30
@@ -58,34 +58,41 @@ export async function sendMessage(
     throw new ChatError(400, `Please keep messages under ${MAX_MESSAGE_LENGTH} characters.`)
   }
 
-  const startedAt = new Date()
-  const recent = await countUserMessagesSince(deps.sb, new Date(startedAt.getTime() - 3600_000))
-  if (recent >= RATE_LIMIT_PER_HOUR) {
+  const turnStart = await beginTurn(deps.sb, RATE_LIMIT_PER_HOUR)
+  if (turnStart.status === 'rate_limited') {
     throw new ChatError(429, "You've sent a lot of messages this hour. Please try again a little later.")
   }
-
-  const [history, profile] = await Promise.all([loadHistory(deps.sb, HISTORY_LIMIT), getProfile(deps.sb)])
-
-  let turn
-  try {
-    turn = await runChatTurn({
-      model: deps.model,
-      ctx: { sb: deps.sb, userId: deps.userId, profile, now: deps.now ?? startedAt },
-      history: replayHistory(history),
-      message: text,
-    })
-  } catch (e) {
-    console.error('chat turn failed:', e instanceof Error ? e.name : typeof e)
-    throw new ChatError(503, 'The helper is unavailable right now. Please try again in a moment.')
+  if (turnStart.status === 'busy') {
+    throw new ChatError(429, "I'm still working on your last message. Give me a moment, then try again.")
   }
 
-  await saveTurn(deps.sb, deps.userId, {
-    user: text,
-    assistant: turn.reply,
-    toolCalls: turn.toolCalls,
-    startedAt,
-  })
-  return { reply: turn.reply, changed: turn.changed }
+  try {
+    const startedAt = new Date()
+    const [history, profile] = await Promise.all([loadHistory(deps.sb, HISTORY_LIMIT), getProfile(deps.sb)])
+
+    let turn
+    try {
+      turn = await runChatTurn({
+        model: deps.model,
+        ctx: { sb: deps.sb, userId: deps.userId, profile, now: deps.now ?? startedAt },
+        history: replayHistory(history),
+        message: text,
+      })
+    } catch (e) {
+      console.error('chat turn failed:', e instanceof Error ? e.name : typeof e)
+      throw new ChatError(503, 'The helper is unavailable right now. Please try again in a moment.')
+    }
+
+    await saveTurn(deps.sb, deps.userId, {
+      user: text,
+      assistant: turn.reply,
+      toolCalls: turn.toolCalls,
+      startedAt,
+    })
+    return { reply: turn.reply, changed: turn.changed }
+  } finally {
+    await endTurn(deps.sb, turnStart.id).catch(() => {})
+  }
 }
 
 export async function getHistory(sb: SupabaseClient): Promise<ChatMessage[]> {

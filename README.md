@@ -33,7 +33,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-4.1-mini
 ```
 
 - `.env*` is git-ignored; only `.env.example` (names, no values) is tracked. To rotate the key, edit `.env.local` and restart `npm run dev`.
-- Cost guards: messages are limited to 1000 characters, 30 messages per hour per user, and at most 6 tool steps per message.
+- Cost guards: messages are limited to 1000 characters, 30 attempts per hour per user (failed attempts count), one message at a time per user, and at most 6 tool steps per message.
 - Chat history is stored per user in `chat_messages` (apply the migrations in `supabase/migrations/` with `npx supabase db push --remote`).
 - `npm run chat:smoke` runs a short scripted conversation against the **real** model and database with a throwaway user (it makes real model calls, so it costs a little; run it after 04:00 UTC).
 

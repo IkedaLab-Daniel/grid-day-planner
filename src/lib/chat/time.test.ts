@@ -3,6 +3,8 @@ import { dayRangeFor } from '@/lib/time/day'
 import {
   isHHmm,
   resolveLocalTime,
+  resolveEnd,
+  MAX_WRAPPED_BLOCK_HOURS,
   floorToCell,
   ceilToCell,
   formatLocalTime,
@@ -80,5 +82,36 @@ describe('formatLocalTime', () => {
 describe('describeNow', () => {
   test('weekday, date and time in the timezone', () => {
     expect(describeNow(new Date('2026-11-18T07:12:00Z'), 'Asia/Tokyo')).toBe('Wednesday 2026-11-18 16:12')
+  })
+})
+
+describe('resolveEnd', () => {
+  const at = (s: string) => new Date(s)
+  const midnightStart: Profile = { timezone: 'UTC', dayStart: '00:00' }
+
+  test('an end later in the same grid day', () => {
+    expect(iso(resolveEnd('2026-08-16', at('2026-08-16T16:10:00Z'), '17:00', utc))).toBe('2026-08-16T17:00:00.000Z')
+  })
+
+  test('midnight as an end after a late start (05:00 day start): the next calendar date, same grid day', () => {
+    expect(iso(resolveEnd('2026-08-16', at('2026-08-16T22:00:00Z'), '00:00', utc))).toBe('2026-08-17T00:00:00.000Z')
+  })
+
+  test('midnight as an end with a 00:00 day start is the day boundary itself', () => {
+    expect(iso(resolveEnd('2026-08-16', at('2026-08-16T22:00:00Z'), '00:00', midnightStart))).toBe('2026-08-17T00:00:00.000Z')
+  })
+
+  test('an end that crosses the day boundary: 23:30 to 06:30 with a 05:00 day start', () => {
+    expect(iso(resolveEnd('2026-08-16', at('2026-08-16T23:30:00Z'), '06:30', utc))).toBe('2026-08-17T06:30:00.000Z')
+  })
+
+  test('an end at or before the start is null, not a 23-hour block', () => {
+    expect(resolveEnd('2026-08-16', at('2026-08-16T16:10:00Z'), '16:10', utc)).toBeNull()
+    expect(resolveEnd('2026-08-16', at('2026-08-16T12:00:00Z'), '11:00', utc)).toBeNull()
+    expect(MAX_WRAPPED_BLOCK_HOURS).toBe(16)
+  })
+
+  test('malformed or skipped wall times are null', () => {
+    expect(resolveEnd('2026-08-16', at('2026-08-16T16:10:00Z'), 'soon', utc)).toBeNull()
   })
 })
