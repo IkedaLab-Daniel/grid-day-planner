@@ -1,6 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
-import { isPublicPath } from '@/lib/auth/routes'
+import { isApiPath, isPublicPath } from '@/lib/auth/routes'
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request })
@@ -25,6 +25,9 @@ export async function proxy(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   if (!user && !isPublicPath(request.nextUrl.pathname)) {
+    if (isApiPath(request.nextUrl.pathname)) {
+      return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    }
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     url.search = ''
