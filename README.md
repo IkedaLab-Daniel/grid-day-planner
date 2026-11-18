@@ -20,6 +20,23 @@ Stack: Next.js (App Router), React, Tailwind, shadcn/ui, Supabase (Auth, Postgre
    ```
    Sign in with an email magic link. The first sign-in creates your profile and seeds six activities.
 
+## Chat helper
+
+A chat sheet on the day page logs what you did, so you don't paint by hand. Say "I started CS50 at 4:10", "still on it", "done at 5", "delete that one" and it records **actual** blocks through tool calls (planning stays hand-painted). If a new block starts after a gap, it asks what you were doing in between before logging.
+
+It runs a LangGraph.js agent inside the Next app against an Azure OpenAI deployment. Add these to `.env.local` (server-side only, never prefix with `NEXT_PUBLIC_`):
+
+```
+AZURE_OPENAI_API_KEY=
+AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com/openai/v1
+AZURE_OPENAI_DEPLOYMENT=gpt-4.1-mini
+```
+
+- `.env*` is git-ignored; only `.env.example` (names, no values) is tracked. To rotate the key, edit `.env.local` and restart `npm run dev`.
+- Cost guards: messages are limited to 1000 characters, 30 messages per hour per user, and at most 6 tool steps per message.
+- Chat history is stored per user in `chat_messages` (apply the migrations in `supabase/migrations/` with `npx supabase db push --remote`).
+- `npm run chat:smoke` runs a short scripted conversation against the **real** model and database with a throwaway user (it makes real model calls, so it costs a little; run it after 04:00 UTC).
+
 ## Tests
 
 ```bash
