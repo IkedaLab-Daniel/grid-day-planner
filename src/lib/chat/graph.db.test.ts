@@ -82,6 +82,12 @@ describe('runChatTurn', () => {
     expect(first.at(-1)).toBeInstanceOf(HumanMessage)
   })
 
+  test('asks the model for one tool call at a time', async () => {
+    const model = scriptedModel([new AIMessage('ok')])
+    await run(model)
+    expect(model.bindOptions).toMatchObject({ parallel_tool_calls: false })
+  })
+
   test('a model that never stops calling tools is cut off with a stuck reply', async () => {
     const r = await run(scriptedModel([call('get_day', {})], { repeatLast: true }))
     expect(r.reply.toLowerCase()).toContain('stuck')

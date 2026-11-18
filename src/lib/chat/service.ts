@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models'
 import { getProfile } from '@/lib/db/profile'
-import { runChatTurn } from '@/lib/chat/graph'
+import { runChatTurn, type ToolCallRecord } from '@/lib/chat/graph'
 import { countUserMessagesSince, loadHistory, saveTurn, type ChatMessage } from '@/lib/chat/store'
 
 export const MAX_MESSAGE_LENGTH = 1000
@@ -24,6 +24,28 @@ export interface ChatServiceDeps {
   model: BaseChatModel
   /** The "now" the tools use. Rate limiting and message timestamps always use the wall clock. */
   now?: Date
+}
+
+/** The skipWith arguments of a log_activity call that was refused with GAP, if that ended the turn. */
+function pendingGap(calls: unknown[] | null): unknown | null {
+  const last = calls?.at(-1) as ToolCallRecord | undefined
+  const result = last?.result as { error?: string; skipWith?: unknown } | undefined
+  return last?.name === 'log_activity' && result?.error === 'GAP' && result.skipWith ? result.skipWith : null
+}
+
+/**
+ * Replay stored text only, but let the model see a gap question it is waiting on: the stored
+ * text alone does not say which block to log again if the user answers "skip".
+ */
+function replayHistory(history: ChatMessage[]): { role: 'user' | 'assistant'; content: string }[] {
+  const last = history.at(-1)
+  return history.map((m) => {
+    const pending = m === last && m.role === 'assistant' ? pendingGap(m.toolCalls) : null
+    const note = pending
+      ? `\n[Pending: that log_activity was refused with GAP. If the user says to skip the gap, call log_activity with exactly ${JSON.stringify(pending)}.]`
+      : ''
+    return { role: m.role, content: m.content + note }
+  })
 }
 
 export async function sendMessage(
@@ -49,7 +71,7 @@ export async function sendMessage(
     turn = await runChatTurn({
       model: deps.model,
       ctx: { sb: deps.sb, userId: deps.userId, profile, now: deps.now ?? startedAt },
-      history: history.map(({ role, content }) => ({ role, content })),
+      history: replayHistory(history),
       message: text,
     })
   } catch (e) {

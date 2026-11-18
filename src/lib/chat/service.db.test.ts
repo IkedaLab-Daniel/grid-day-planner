@@ -92,6 +92,38 @@ describe('sendMessage', () => {
     expect(String(model.calls[0][1].content)).toBe('m5')
   })
 
+  test('a pending GAP from the last assistant turn is shown to the model so a skip can be applied correctly', async () => {
+    const skipWith = { activity: 'DP-700', start: '16:40', gap: 'skip' }
+    await admin.from('chat_messages').insert([
+      { user_id: user.id, role: 'user', content: 'I started DP-700 at 16:40', created_at: new Date(Date.now() - 120_000).toISOString() },
+      {
+        user_id: user.id,
+        role: 'assistant',
+        content: 'What were you doing 16:20-16:40?',
+        tool_calls: [
+          { name: 'log_activity', args: { activity: 'DP-700', start: '16:40' }, result: { ok: false, error: 'GAP', from: '16:20', to: '16:40', skipWith } },
+        ],
+        created_at: new Date(Date.now() - 60_000).toISOString(),
+      },
+    ])
+    const model = scriptedModel([new AIMessage('ok')])
+    await sendMessage(deps(model), 'skip it')
+    const replayed = model.calls[0].map((m) => String(m.content)).join('\n')
+    expect(replayed).toContain('What were you doing 16:20-16:40?')
+    // jsonb does not keep key order, so check each pair rather than one exact string
+    for (const pair of ['"activity":"DP-700"', '"start":"16:40"', '"gap":"skip"']) expect(replayed).toContain(pair)
+  })
+
+  test('a finished assistant turn adds nothing extra to the replayed history', async () => {
+    await admin.from('chat_messages').insert([
+      { user_id: user.id, role: 'user', content: 'hi', created_at: new Date(Date.now() - 120_000).toISOString() },
+      { user_id: user.id, role: 'assistant', content: 'hello', tool_calls: [{ name: 'get_day', args: {}, result: { ok: true } }], created_at: new Date(Date.now() - 60_000).toISOString() },
+    ])
+    const model = scriptedModel([new AIMessage('ok')])
+    await sendMessage(deps(model), 'again')
+    expect(model.calls[0].map((m) => String(m.content)).slice(1, 3)).toEqual(['hi', 'hello'])
+  })
+
   test('ChatError carries its status', () => {
     expect(new ChatError(429, 'slow down').status).toBe(429)
   })

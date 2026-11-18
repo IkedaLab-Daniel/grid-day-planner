@@ -9,6 +9,7 @@ import { listBlocks } from '@/lib/db/blocks'
 import { dateKeyOf, dayRangeFor } from '@/lib/time/day'
 import { DayView } from '@/components/day/DayView'
 import { DayNav } from '@/components/day/DayNav'
+import { ChatLauncher } from '@/components/chat/ChatLauncher'
 import { deleteBlockAction, paintAction, updateBlockAction } from './actions'
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/
@@ -34,26 +35,29 @@ async function DayContent({ params }: { params: Promise<{ date: string }> }) {
   const [blocks, activities] = await Promise.all([listBlocks(sb, range), listActivities(sb)])
 
   return (
-    <main className="mx-auto flex max-w-5xl flex-col gap-4 px-4 py-4">
-      <header className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-semibold">{date}</h1>
-          <Link className="text-sm underline" href="/settings">
-            Settings
-          </Link>
-        </div>
-        <DayNav dateKey={date} todayKey={todayKey} />
-      </header>
-      <DayView
-        dateKey={date}
-        range={range}
-        tz={profile.timezone}
-        blocks={blocks}
-        activities={activities}
-        paint={paintAction}
-        updateBlock={updateBlockAction}
-        deleteBlock={deleteBlockAction}
-      />
-    </main>
+    <>
+      <main className="mx-auto flex max-w-5xl flex-col gap-4 px-4 py-4">
+        <header className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <h1 className="text-xl font-semibold">{date}</h1>
+            <Link className="text-sm underline" href="/settings">
+              Settings
+            </Link>
+          </div>
+          <DayNav dateKey={date} todayKey={todayKey} />
+        </header>
+        <DayView
+          dateKey={date}
+          range={range}
+          tz={profile.timezone}
+          blocks={blocks}
+          activities={activities}
+          paint={paintAction}
+          updateBlock={updateBlockAction}
+          deleteBlock={deleteBlockAction}
+        />
+      </main>
+      <ChatLauncher />
+    </>
   )
 }

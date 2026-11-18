@@ -55,9 +55,30 @@ describe('buildSystemPrompt', () => {
     }
   })
 
-  test('with no actual blocks it says so instead of inventing a last end', () => {
+  test('with no actual blocks it says so instead of inventing a last end, and that no gap question is needed', () => {
     const empty = buildSystemPrompt({ ...base, actual: [], plan: [] })
     expect(empty).toContain('No actual blocks logged yet')
+    expect(empty).toContain('needs no gap question')
     expect(empty).not.toContain('Last actual block ends at')
+  })
+
+  test('tells the model to confirm in one line without follow-up offers, and what to do when nothing changed', () => {
+    expect(prompt).toContain('do not add follow-up questions or offers')
+    expect(prompt).toContain('unchanged')
+  })
+
+  test('tells the model that only the tool decides when there is a gap, and how to skip one', () => {
+    expect(prompt).toContain('Do not ask about gaps yourself')
+    expect(prompt).toContain('GAP')
+    expect(prompt).toContain('skipWith')
+  })
+
+  test('forbids re-logging blocks that are already listed', () => {
+    expect(prompt).toContain('never log a block that is already listed')
+  })
+
+  test('includes a worked example of the gap flow', () => {
+    expect(prompt).toContain('Example')
+    expect(prompt).toContain('gap: "skip"')
   })
 })

@@ -110,7 +110,7 @@ export async function getDay(
 export async function logActivity(
   ctx: ToolContext,
   args: { activity: string; start: string; end?: string; date?: string; gap?: 'skip' },
-): Promise<{ ok: true; block: BlockView } | ToolError> {
+): Promise<{ ok: true; block: BlockView; unchanged?: true } | ToolError> {
   const day = resolveDay(ctx, args.date)
   if ('ok' in day) return day
   const { dayKey, range } = day
@@ -141,13 +141,30 @@ export async function logActivity(
   if (end.getTime() > nowCeil.getTime()) return invalidTime('end', 'end is in the future')
   if (!isOnGrid(range, start, end)) return invalidTime('end', 'the block does not fit on that day')
 
+  const actual = (await listBlocks(ctx.sb, range)).filter((b) => b.kind === 'actual')
+
+  // Logging exactly what is already there changes nothing (and must not trim or duplicate).
+  const same = actual.find(
+    (b) =>
+      b.activityId === match.activity.id &&
+      b.startAt.getTime() === start.getTime() &&
+      b.endAt.getTime() === end.getTime(),
+  )
+  if (same) return { ok: true, unchanged: true, block: toView(same, activities, tz) }
+
   if (args.gap !== 'skip') {
-    const actual = (await listBlocks(ctx.sb, range)).filter((b) => b.kind === 'actual')
     const earlier = actual.filter((b) => b.endAt.getTime() <= start.getTime())
     if (earlier.length > 0) {
       const prevEnd = new Date(Math.max(...earlier.map((b) => b.endAt.getTime())))
       if (prevEnd.getTime() < start.getTime()) {
-        return { ok: false, error: 'GAP', from: formatLocalTime(prevEnd, tz), to: formatLocalTime(start, tz) }
+        return {
+          ok: false,
+          error: 'GAP',
+          from: formatLocalTime(prevEnd, tz),
+          to: formatLocalTime(start, tz),
+          // Exactly what to send again if the user says to leave the gap empty.
+          skipWith: { ...args, gap: 'skip' },
+        }
       }
     }
   }
@@ -245,7 +262,7 @@ export async function setEnd(
 export async function editBlock(
   ctx: ToolContext,
   args: { blockId: string; start?: string; end?: string; activity?: string },
-): Promise<{ ok: true; block: BlockView } | ToolError> {
+): Promise<{ ok: true; block: BlockView; unchanged?: true } | ToolError> {
   const target = await findActualBlock(ctx, args.blockId)
   if (!target) return notFound()
   const { dayKey, range } = dayOf(ctx, target)
@@ -276,6 +293,14 @@ export async function editBlock(
   if (end.getTime() <= start.getTime()) return invalidTime('end', 'end must be after the start')
   if (end.getTime() > nowCeil.getTime()) return invalidTime('end', 'end is in the future')
   if (!isOnGrid(range, start, end)) return invalidTime('end', 'the block does not fit on that day')
+
+  if (
+    activityId === target.activityId &&
+    start.getTime() === target.startAt.getTime() &&
+    end.getTime() === target.endAt.getTime()
+  ) {
+    return { ok: true, unchanged: true, block: toView(target, activities, ctx.profile.timezone) }
+  }
 
   await moveBlock(ctx.sb, ctx.userId, ctx.profile, target.id, start, end, activityId)
   const view = await reread(ctx, range, activityId, start)

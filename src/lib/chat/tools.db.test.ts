@@ -19,6 +19,8 @@ const utc: Profile = { timezone: 'UTC', dayStart: '05:00' }
 const ny: Profile = { timezone: 'America/New_York', dayStart: '05:00' }
 const day = dayRangeFor('2026-08-16', 'UTC', '05:00')
 
+const idOf = (r: unknown) => (r as { block: { id: string } }).block.id
+
 let user: TestUser
 const ctx = (now: string, profile: Profile = utc): ToolContext => ({
   sb: user.client,
@@ -51,7 +53,13 @@ describe('logActivity', () => {
   test('a gap before the new start is refused until the user says skip', async () => {
     await logActivity(ctx('2026-08-16T16:12:00Z'), { activity: 'CS50', start: '16:10' })
     const refused = await logActivity(ctx('2026-08-16T16:42:00Z'), { activity: 'DP-700', start: '16:40' })
-    expect(refused).toMatchObject({ ok: false, error: 'GAP', from: '16:20', to: '16:40' })
+    expect(refused).toMatchObject({
+      ok: false,
+      error: 'GAP',
+      from: '16:20',
+      to: '16:40',
+      skipWith: { activity: 'DP-700', start: '16:40', gap: 'skip' },
+    })
     expect(await blocks()).toHaveLength(1)
 
     const skipped = await logActivity(ctx('2026-08-16T16:42:00Z'), { activity: 'DP-700', start: '16:40', gap: 'skip' })
@@ -59,6 +67,14 @@ describe('logActivity', () => {
     const rows = await blocks()
     expect(rows).toHaveLength(2)
     expect(rows.find((b) => iso(b.startAt) === '2026-08-16T16:10:00.000Z')?.endAt.toISOString()).toBe('2026-08-16T16:20:00.000Z')
+  })
+
+  test('logging the exact same block again is a no-op, not a duplicate or a trim', async () => {
+    const first = await logActivity(ctx('2026-08-16T16:12:00Z'), { activity: 'CS50', start: '16:10' })
+    const again = await logActivity(ctx('2026-08-16T16:14:00Z'), { activity: 'CS50', start: '16:10' })
+    expect(again).toMatchObject({ ok: true, unchanged: true, block: { activity: 'CS50', start: '16:10', end: '16:20' } })
+    expect(idOf(again)).toBe(idOf(first))
+    expect((await blocks()).map((b) => b.id)).toEqual([idOf(first)])
   })
 
   test('a block that starts where the last one ended needs no gap answer', async () => {
@@ -161,8 +177,6 @@ describe('getDay', () => {
   })
 })
 
-const idOf = (r: unknown) => (r as { block: { id: string } }).block.id
-
 describe('setEnd', () => {
   test('with no end it extends the latest actual block to now, rounded up, giving it a new id', async () => {
     const first = await logActivity(ctx('2026-08-16T16:12:00Z'), { activity: 'CS50', start: '16:10' })
@@ -211,6 +225,14 @@ describe('editBlock and removeBlock', () => {
     const rows = await blocks()
     expect(rows).toHaveLength(1)
     expect(rows[0].source).toBe('ai')
+  })
+
+  test('editBlock with nothing to change is a no-op that keeps the id', async () => {
+    const first = await logActivity(ctx('2026-08-16T16:12:00Z'), { activity: 'CS50', start: '16:10' })
+    const r = await editBlock(ctx('2026-08-16T16:42:00Z'), { blockId: idOf(first), start: '16:10', end: '16:20', activity: 'cs50' })
+    expect(r).toMatchObject({ ok: true, unchanged: true, block: { activity: 'CS50', start: '16:10', end: '16:20' } })
+    expect(idOf(r)).toBe(idOf(first))
+    expect((await blocks()).map((b) => b.id)).toEqual([idOf(first)])
   })
 
   test('editBlock rejects times that are not on the grid or in the future', async () => {

@@ -8,6 +8,8 @@ import type { ChatResult } from '@langchain/core/outputs'
  */
 export class ScriptedChatModel extends BaseChatModel {
   readonly calls: BaseMessage[][] = []
+  /** The options the graph passed to bindTools (e.g. parallel_tool_calls). */
+  bindOptions: Record<string, unknown> | undefined
   private index = 0
 
   constructor(
@@ -21,7 +23,8 @@ export class ScriptedChatModel extends BaseChatModel {
     return 'scripted'
   }
 
-  bindTools() {
+  bindTools(_tools?: unknown, options?: Record<string, unknown>) {
+    this.bindOptions = options
     return this
   }
 

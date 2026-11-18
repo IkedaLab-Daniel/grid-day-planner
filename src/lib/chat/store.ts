@@ -5,6 +5,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   createdAt: Date
+  /** Tool calls recorded on an assistant message; null for user messages and older rows. */
+  toolCalls: unknown[] | null
 }
 
 interface Row {
@@ -12,13 +14,14 @@ interface Row {
   role: 'user' | 'assistant'
   content: string
   created_at: string
+  tool_calls: unknown[] | null
 }
 
 /** The latest `limit` messages, oldest first. */
 export async function loadHistory(sb: SupabaseClient, limit = 20): Promise<ChatMessage[]> {
   const { data, error } = await sb
     .from('chat_messages')
-    .select('id, role, content, created_at')
+    .select('id, role, content, created_at, tool_calls')
     .order('created_at', { ascending: false })
     .limit(limit)
   if (error) throw error
@@ -27,6 +30,7 @@ export async function loadHistory(sb: SupabaseClient, limit = 20): Promise<ChatM
     role: r.role,
     content: r.content,
     createdAt: new Date(r.created_at),
+    toolCalls: r.tool_calls,
   }))
 }
 

@@ -140,7 +140,8 @@ export async function runChatTurn(input: {
 }): Promise<{ reply: string; changed: boolean; toolCalls: ToolCallRecord[] }> {
   const tools = buildTools(input.ctx)
   if (!input.model.bindTools) throw new Error('This model does not support tool calling')
-  const withTools = input.model.bindTools(tools)
+  // One tool call at a time: calls in a single response would otherwise run in parallel and race.
+  const withTools = input.model.bindTools(tools, { parallel_tool_calls: false } as never)
   const system = new SystemMessage(buildSystemPrompt(await loadDayContext(input.ctx)))
 
   const graph = new StateGraph(MessagesAnnotation)
